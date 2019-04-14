@@ -14,6 +14,7 @@ from baselines import logger
 from importlib import import_module
 
 from baselines.common.vec_env.vec_normalize import VecNormalize
+from baselines.common.vec_env.prio_vec_normalize import PrioVecNormalize
 
 try:
     from mpi4py import MPI
@@ -115,19 +116,23 @@ def build_env(args, prio_args=None):
             frame_stack_size = 4
             env = make_vec_env(env_id, env_type, nenv, seed, gamestate=args.gamestate, reward_scale=args.reward_scale, prio_args=prio_args)
             env = VecFrameStack(env, frame_stack_size)
+            # TODO prio vec frame stack
 
     else:
-       config = tf.ConfigProto(allow_soft_placement=True,
-                               intra_op_parallelism_threads=1,
-                               inter_op_parallelism_threads=1)
-       config.gpu_options.allow_growth = True
-       get_session(config=config)
+        config = tf.ConfigProto(allow_soft_placement=True,
+                                intra_op_parallelism_threads=1,
+                                inter_op_parallelism_threads=1)
+        config.gpu_options.allow_growth = True
+        get_session(config=config)
 
-       flatten_dict_observations = alg not in {'her'}
-       env = make_vec_env(env_id, env_type, args.num_env or 1, seed, reward_scale=args.reward_scale, flatten_dict_observations=flatten_dict_observations, prio_args=prio_args)
+        flatten_dict_observations = alg not in {'her'}
+        env = make_vec_env(env_id, env_type, args.num_env or 1, seed, reward_scale=args.reward_scale, flatten_dict_observations=flatten_dict_observations, prio_args=prio_args)
 
-       if env_type == 'mujoco':
-           env = VecNormalize(env)
+        if env_type == 'mujoco':
+            if prio_args is None:
+                env = VecNormalize(env)
+            else:
+                env = PrioVecNormalize(env)
 
     return env
 

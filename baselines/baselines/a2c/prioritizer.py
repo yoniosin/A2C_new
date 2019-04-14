@@ -26,16 +26,16 @@ class RandomPrioritizer(Prioritizer):
 
 class GreedyValuePrioritizer(RandomPrioritizer):
     def pick_active_envs(self, prio_val=None):
+        def epsilon_greedy():
+            if random.random() > self.epsilon:
+                return best_envs.pop(0)
+            return random.sample(self.all_envs.difference(chosen_envs), 1)[0]
+
         if prio_val is None:
             return super().pick_active_envs(prio_val)
 
         best_envs = nlargest(self.active_envs_num, list(range(self.envs_num)), key=lambda x: prio_val[x])
         chosen_envs = set()
-
-        def epsilon_greedy():
-            if random.random() > self.epsilon:
-                return best_envs.pop(0)
-            return random.sample(self.all_envs.difference(chosen_envs), 1)[0]
 
         # _envs_to_add = [epsilon_greedy() for _ in range(self.active_envs_num)]
         # chosen_envs.add([env for env in _envs_to_add])

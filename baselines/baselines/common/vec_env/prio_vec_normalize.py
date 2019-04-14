@@ -15,12 +15,12 @@ class PrioVecNormalize(VecNormalize):
             self.ret[i] += r
         obs = self._obfilt(obs)
         if self.ret_rms:
-            self.ret_rms.update(self.ret) # TODO check if order imporatant
+            self.ret_rms.update(self.ret[active_idx])
             rews = np.clip(rews / np.sqrt(self.ret_rms.var + self.epsilon), -self.cliprew, self.cliprew)
         for i, new in zip(active_idx, news):
             if new:
                 self.ret[i] = 0.
-        return obs, rews[active_idx], news, infos
+        return obs, rews, news, infos
 
     def _obfilt(self, obs):
         if self.ob_rms:

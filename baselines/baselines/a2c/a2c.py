@@ -16,6 +16,21 @@ from collections import deque
 
 from tensorflow import losses
 
+from baselines.a2c.prioritizer import *
+from baselines.a2c.MyNN import MyNN
+
+
+def GetValuesForPrio(prio_type, prio_param, advs, rewards):
+    if prio_type == 'random':
+        return None
+    if prio_type == 'greedy':
+        if prio_param == 'reward':
+            return rewards
+        if prio_param == 'error':
+            return abs(advs)
+    raise NotImplementedError(prio_type + ' ' + prio_param)
+
+
 class Model(object):
 
     """
@@ -30,12 +45,22 @@ class Model(object):
         save/load():
         - Save load the model
     """
+    @staticmethod
+    def get_active_envs(env):
+        try:
+            return env.venv.n_active_envs
+        except AttributeError:
+            return env.venv.venv.n_active_envs
+
     def __init__(self, policy, env, nsteps,
             ent_coef=0.01, vf_coef=0.5, max_grad_norm=0.5, lr=7e-4,
-            alpha=0.99, epsilon=1e-5, total_timesteps=int(80e6), lrschedule='linear'):
-
+            alpha=0.99, epsilon=1e-5, total_timesteps=int(80e6), lrschedule='linear', prio_args=None, network='cnn'):
+        self.prio_args = prio_args
+        self.prio_score = None
+        prio = False if prio_args is None else prio_args.prio
         sess = tf_util.get_session()
-        nenvs = env.num_envs
+
+        nenvs = env.num_envs if not prio else env.n_active_envs
         nbatch = nenvs*nsteps
 
 
@@ -67,25 +92,43 @@ class Model(object):
 
         loss = pg_loss - entropy*ent_coef + vf_loss * vf_coef
 
+        """prio model"""
+        with tf.variable_scope('a2c_model_prio', reuse=tf.AUTO_REUSE):
+            prio_model = MyNN(env, nbatch, network)
+
+        P_R = tf.placeholder(tf.float32, [nbatch])
+        PRIO = tf.placeholder(tf.float32, [nbatch])
+        P_LR = tf.placeholder(tf.float32, [])
+
+        # prio_model_loss = losses.mean_squared_error(tf.squeeze(prio_model.out), P_R) # Reward
+        prio_model_loss = losses.mean_squared_error(tf.squeeze(prio_model.out), PRIO)  # TD Error
+
         # Update parameters using loss
         # 1. Get the model parameters
         params = find_trainable_variables("a2c_model")
+        params_prio = find_trainable_variables("a2c_model_prio")
 
         # 2. Calculate the gradients
         grads = tf.gradients(loss, params)
+        prio_grads = tf.gradients(prio_model_loss, params_prio)
         if max_grad_norm is not None:
             # Clip the gradients (normalize)
             grads, grad_norm = tf.clip_by_global_norm(grads, max_grad_norm)
+            prio_grads, prio_grad_norm = tf.clip_by_global_norm(prio_grads, max_grad_norm)
         grads = list(zip(grads, params))
+        prio_grads = list(zip(prio_grads, params_prio))
         # zip aggregate each gradient with parameters associated
         # For instance zip(ABCD, xyza) => Ax, By, Cz, Da
 
         # 3. Make op for one policy and value update step of A2C
         trainer = tf.train.RMSPropOptimizer(learning_rate=LR, decay=alpha, epsilon=epsilon)
+        prio_trainer = tf.train.RMSPropOptimizer(learning_rate=P_LR, decay=alpha, epsilon=epsilon)
 
         _train = trainer.apply_gradients(grads)
+        _prio_train = prio_trainer.apply_gradients(prio_grads)
 
         lr = Scheduler(v=lr, nvalues=total_timesteps, schedule=lrschedule)
+        prio_lr = Scheduler(v=lr, nvalues=total_timesteps, schedule=lrschedule)
 
         def train(obs, states, rewards, masks, actions, values):
             # Here we calculate advantage A(s,a) = R + yV(s') - V(s)
@@ -102,10 +145,32 @@ class Model(object):
                 [pg_loss, vf_loss, entropy, _train],
                 td_map
             )
+
             return policy_loss, value_loss, policy_entropy
 
+        def prioritizer_train(obs, states, rewards, masks, actions, values):
+            for step in range(len(obs)):
+                cur_lr = prio_lr.value()
+
+            advs = rewards - values
+            prio_loss = 0
+            if prio:
+                prio_values = GetValuesForPrio(self.prio_args.prio_type, self.prio_args.prio_param, advs, rewards)
+                if prio_values is not None:
+                    prio_td_map = {prio_model.X: obs, P_R: rewards, P_LR: cur_lr, PRIO: prio_values}
+
+                    prio_loss, _, p_td = sess.run(
+                        [prio_model_loss, _prio_train, PRIO],
+                        prio_td_map
+                    )
+                    # mb aranged as 1D-vector = [[env_1: n1, ..., n_nstep],...,[env_n_active]]
+                    # need to take last value of each env's buffer
+                    self.prio_score = prio_values[list(filter(lambda x: x % nsteps == (nsteps - 1), range(len(prio_values))))]
+
+            return prio_loss
 
         self.train = train
+        self.prioritizer_train = prioritizer_train
         self.train_model = train_model
         self.step_model = step_model
         self.step = step_model.step
@@ -185,6 +250,7 @@ def learn(
 
 
     set_global_seeds(seed)
+    prio = False if not prio_args else prio_args.prio
 
     # Get the nb of env
     nenvs = env.num_envs
@@ -192,7 +258,8 @@ def learn(
 
     # Instantiate the model object (that creates step_model and train_model)
     model = Model(policy=policy, env=env, nsteps=nsteps, ent_coef=ent_coef, vf_coef=vf_coef,
-        max_grad_norm=max_grad_norm, lr=lr, alpha=alpha, epsilon=epsilon, total_timesteps=total_timesteps, lrschedule=lrschedule)
+                max_grad_norm=max_grad_norm, lr=lr, alpha=alpha, epsilon=epsilon, total_timesteps=total_timesteps, lrschedule=lrschedule,
+                network=network, prio_args=prio_args)
     if load_path is not None:
         model.load(load_path)
 
@@ -216,7 +283,12 @@ def learn(
                 print('active envs {}'.format(runner.active_envs))
             except:
                 pass
+
         policy_loss, value_loss, policy_entropy = model.train(obs, states, rewards, masks, actions, values)
+        prio_loss = model.prioritizer_train(obs, states, rewards, masks, actions, values)
+        if prio and model.prio_score is not None:
+            for i, env in enumerate(runner.active_envs):
+                runner.all_envs.prio_score[env] = model.prio_score[i]
         nseconds = time.time()-tstart
 
         # Calculate the fps (frame per second)
@@ -230,6 +302,7 @@ def learn(
             logger.record_tabular("fps", fps)
             logger.record_tabular("policy_entropy", float(policy_entropy))
             logger.record_tabular("value_loss", float(value_loss))
+            logger.record_tabular("prio_loss", float(prio_loss))
             logger.record_tabular("explained_variance", float(ev))
             logger.record_tabular("eprewmean", safemean([epinfo['r'] for epinfo in epinfobuf]))
             logger.record_tabular("eplenmean", safemean([epinfo['l'] for epinfo in epinfobuf]))

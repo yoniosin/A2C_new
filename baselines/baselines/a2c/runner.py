@@ -27,7 +27,7 @@ class Runner(AbstractEnvRunner):
             self.prio = prio_args.prio
             self.prioritizer = PrioritizerFactory(prio_args)
             self.all_envs = AllEnvData(obs=self.obs, states=self.states, dones=self.dones)
-
+            self.batch_ob_shape = (prio_args.n_active_envs * nsteps,) + env.observation_space.shape
 
     def run(self):
         # We initialize the lists that will contain the mb (memory buffer) of experiences
@@ -39,6 +39,9 @@ class Runner(AbstractEnvRunner):
             # Given observations, take action and value (V(s))
             # We already have self.obs because Runner superclass run self.obs[:] = env.reset() on init
             actions, values, states, _ = self.model.step(self.obs, S=self.states, M=self.dones)
+            # actions, values, states, _ = self.model.step(self.all_envs.obs, S=self.all_envs.states, M=self.all_envs.dones)
+            # actions = actions[self.active_envs]
+            # values = values[self.active_envs]
 
             # Append the experiences
             mb.append(obs=self.obs, a=actions, v=values, dones=self.dones)
@@ -47,7 +50,8 @@ class Runner(AbstractEnvRunner):
             obs, rewards, dones, infos = self.env.step(actions)
             for info in infos:
                 maybeepinfo = info.get('episode')
-                if maybeepinfo: epinfos.append(maybeepinfo)
+                if maybeepinfo:
+                    epinfos.append(maybeepinfo)
             self.states = states
             self.dones = dones
             for n, done in enumerate(dones):
@@ -66,6 +70,7 @@ class Runner(AbstractEnvRunner):
         mb.discount_reward(self.gamma, last_values)
         mb.flatten(self.batch_action_shape)
 
+        self.update_all_envs()
         return mb.results() + (epinfos,)
 
     def reorder_obs(self):
@@ -86,7 +91,12 @@ class Runner(AbstractEnvRunner):
                 self.obs = [self.all_envs.obs[i] for i in self.active_envs]
                 self.states = self.all_envs.states[self.active_envs] if self.all_envs.states else self.all_envs.states
                 self.dones = [self.all_envs.dones[i] for i in self.active_envs]
+
                 # self.env.stackedobs = [self.all_env_dict['stackedobs'][i] for i in self.active_envs]
+
+    def update_all_envs(self):
+        if self.prio:
+            self.all_envs.update(obs=self.obs, dones=self.dones, states=self.states, envs_idx=self.active_envs)
 
 
 class AllEnvData:
@@ -94,6 +104,15 @@ class AllEnvData:
         self.obs = deepcopy(obs)
         self.states = deepcopy(states)
         self.dones = deepcopy(dones)
+        self.prio_score = np.full((len(dones)), np.inf)
+
+    def update(self, obs, dones, states, envs_idx):
+        for i, env in enumerate(envs_idx):
+            self.obs[env] = deepcopy(obs[i])
+            self.dones[env] = deepcopy(dones[i])
+            if states:
+                self.states[env] = deepcopy(states[i])
+
 
 class MemoryBuffer:
     def __init__(self):
