@@ -22,6 +22,23 @@ class PrioVecNormalize(VecNormalize):
                 self.ret[i] = 0.
         return obs, rews, news, infos
 
+    def step_wait_exploration(self):
+        res = self.venv.step_wait_exploration()
+        if not res:
+            return None
+        obs, rews, news, infos, exploration_list = res
+        for i, r in zip(exploration_list, rews):
+            self.ret[i] *= self.gamma
+            self.ret[i] += r
+        obs = self._obfilt(obs)
+        if self.ret_rms:
+            self.ret_rms.update(self.ret[exploration_list])
+            rews = np.clip(rews / np.sqrt(self.ret_rms.var + self.epsilon), -self.cliprew, self.cliprew)
+        for i, new in zip(exploration_list, news):
+            if new:
+                self.ret[i] = 0.
+        return obs, rews, news, infos, exploration_list
+
     def _obfilt(self, obs):
         if self.ob_rms:
             self.ob_rms.update(obs)

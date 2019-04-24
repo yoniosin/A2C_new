@@ -149,7 +149,7 @@ def symmetric_ema(xolds, yolds, low=None, high=None, n=512, decay_steps=1., low_
 Result = namedtuple('Result', 'monitor progress dirname metadata')
 Result.__new__.__defaults__ = (None,) * len(Result._fields)
 
-def load_results(root_dir_or_dirs, enable_progress=True, enable_monitor=True, verbose=False):
+def load_results(root_dir_or_dirs, running_agents, enable_progress=True, enable_monitor=True, verbose=False):
     '''
     load summaries of runs from a list of directories (including subdirectories)
     Arguments:
@@ -169,6 +169,7 @@ def load_results(root_dir_or_dirs, enable_progress=True, enable_monitor=True, ve
          - progress - if enable_progress is True, this field contains pandas dataframe with loaded progress.csv file
     '''
     import re
+    RunMetaData = namedtuple('RunMetaData', ['type', 'n_active_agents', 'n_agents', 'exp_freq', 'run_num'])
     if isinstance(root_dir_or_dirs, str):
         rootdirs = [osp.expanduser(root_dir_or_dirs)]
     else:
@@ -177,6 +178,12 @@ def load_results(root_dir_or_dirs, enable_progress=True, enable_monitor=True, ve
     for rootdir in rootdirs:
         assert osp.exists(rootdir), "%s doesn't exist"%rootdir
         for dirname, dirs, files in os.walk(rootdir):
+            if running_agents is not None:
+                re_template = r"\/(\D+)_(\d+)(?:_(\d+))?_(?:no_exp|exp_freq(\d+))-(\d)"
+                run_meta_data = re.search(re_template, dirname)
+                if run_meta_data is not None and int(run_meta_data.groups()[1]) != running_agents:
+                    continue
+                ## IT RETURN NONE
             if '-proc' in dirname:
                 files[:] = []
                 continue
@@ -197,6 +204,7 @@ def load_results(root_dir_or_dirs, enable_progress=True, enable_monitor=True, ve
                         result['progress'] = pandas.DataFrame(read_json(progjson))
                     elif osp.exists(progcsv):
                         try:
+                            print(progcsv)
                             result['progress'] = read_csv(progcsv)
                         except pandas.errors.EmptyDataError:
                             print('skipping progress file in ', dirname, 'empty data')
@@ -320,6 +328,7 @@ def plot_results(
         for result in sresults:
             group = group_fn(result)
             g2c[group] += 1
+            print('xy   ' + result[2])
             x, y = xy_fn(result)
             if x is None: x = np.arange(len(y))
             x, y = map(np.asarray, (x, y))
@@ -346,6 +355,7 @@ def plot_results(
                     usex = np.linspace(low, high, resample)
                     ys = []
                     for (x, y) in xys:
+                        y = np.nan_to_num(y)
                         ys.append(symmetric_ema(x, y, low, high, resample, decay_steps=smooth_step)[1])
                 else:
                     assert allequal([x[:minxlen] for x in origxs]),\

@@ -13,6 +13,12 @@ def worker(remote, parent_remote, env_fn_wrapper):
                 if done:
                     ob = env.reset()
                 remote.send((ob, reward, done, info))
+            elif cmd == 'random_step':
+                ob, reward, done, info = env.step(env.action_space.sample())
+                # ob, reward, done, info = env.step(data)
+                if done:
+                    ob = env.reset()
+                remote.send((ob, reward, done, info))
             elif cmd == 'reset':
                 ob = env.reset()
                 remote.send(ob)

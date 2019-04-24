@@ -28,3 +28,6 @@ class VecFrameStack(VecEnvWrapper):
         self.stackedobs[...] = 0
         self.stackedobs[..., -obs.shape[-1]:] = obs
         return self.stackedobs
+
+    def set_active_envs(self, active_idx):
+        self.venv.set_active_envs(active_idx)

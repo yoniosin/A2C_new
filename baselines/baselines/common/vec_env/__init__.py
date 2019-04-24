@@ -95,14 +95,31 @@ class VecEnv(ABC):
         self.close_extras()
         self.closed = True
 
-    def step(self, actions):
+    def step(self, actions, exploration_step):
         """
         Step the environments synchronously.
 
         This is available for backwards compatibility.
         """
+        exploration_res = []
         self.step_async(actions)
-        return self.step_wait()
+
+        for _ in range(exploration_step):
+            self.step_async_exploration()
+            exp_res = self.step_wait_exploration()
+            if exp_res:
+                exploration_res.append(exp_res)
+        self.zero_time_from_last_activation()
+        return self.step_wait(), exploration_res
+
+    def zero_time_from_last_activation(self):
+        pass
+
+    def step_async_exploration(self):
+        pass
+
+    def step_wait_exploration(self):
+        pass
 
     def render(self, mode='human'):
         imgs = self.get_images()
@@ -150,6 +167,13 @@ class VecEnvWrapper(VecEnv):
 
     def step_async(self, actions):
         self.venv.step_async(actions)
+
+    def step_async_exploration(self):
+        self.venv.step_async_exploration()
+
+    def zero_time_from_last_activation(self):
+        self.venv.zero_time_from_last_activation()
+
 
     @abstractmethod
     def reset(self):

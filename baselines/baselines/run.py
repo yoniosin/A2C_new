@@ -1,3 +1,5 @@
+import glob
+import os
 import sys
 import multiprocessing
 import os.path as osp
@@ -8,6 +10,7 @@ import numpy as np
 
 from baselines.common.vec_env.vec_video_recorder import VecVideoRecorder
 from baselines.common.vec_env.vec_frame_stack import VecFrameStack
+from baselines.common.vec_env.prio_vec_frame_stack import PrioVecFrameStack
 from baselines.common.cmd_util import common_arg_parser, prio_arg_parser, parse_unknown_args, make_vec_env, make_env
 from baselines.common.tf_util import get_session
 from baselines import logger
@@ -52,7 +55,7 @@ _game_envs['retro'] = {
 }
 
 
-def train(args, extra_args, prio_args):
+def train(args, extra_args, prio_args, dir):
     env_type, env_id = get_env_type(args.env)
     print('env_type: {}'.format(env_type))
 
@@ -63,7 +66,8 @@ def train(args, extra_args, prio_args):
     alg_kwargs = get_learn_function_defaults(args.alg, env_type)
     alg_kwargs.update(extra_args)
 
-    env = build_env(args, prio_args)
+    env = build_env(args, silent_monitor=True, prio_args=prio_args)
+    eval_env = build_env(args, silent_monitor=False)
     if args.save_video_interval != 0:
         env = VecVideoRecorder(env, osp.join(logger.Logger.CURRENT.dir, "videos"), record_video_trigger=lambda x: x % args.save_video_interval == 0, video_length=args.save_video_length)
 
@@ -79,6 +83,7 @@ def train(args, extra_args, prio_args):
         print('Prioritization parameters:')
         print('number of running envs: {} / {}'.format(prio_args.n_active_envs, args.num_env))
         print('prioritization method: {} {}'.format(prio_args.prio_type, prio_args.prio_param))
+        print('exploration after {} steps'.format(prio_args.time_limit))
         print('-------------------------------')
     else:
         print('------------------------------')
@@ -89,16 +94,18 @@ def train(args, extra_args, prio_args):
 
     model = learn(
         env=env,
+        eval_env=eval_env,
         seed=seed,
         total_timesteps=total_timesteps,
         prio_args=prio_args,
+        dir=dir,
         **alg_kwargs
     )
 
     return model, env
 
 
-def build_env(args, prio_args=None):
+def build_env(args, silent_monitor, prio_args=None):
     ncpu = multiprocessing.cpu_count()
     if sys.platform == 'darwin': ncpu //= 2
     nenv = args.num_env or ncpu
@@ -114,8 +121,13 @@ def build_env(args, prio_args=None):
             env = make_env(env_id, env_type, seed=seed)
         else:
             frame_stack_size = 4
-            env = make_vec_env(env_id, env_type, nenv, seed, gamestate=args.gamestate, reward_scale=args.reward_scale, prio_args=prio_args)
-            env = VecFrameStack(env, frame_stack_size)
+            env = make_vec_env(env_id, env_type, nenv, seed, gamestate=args.gamestate, reward_scale=args.reward_scale,
+                               prio_args=prio_args, silent_monitor=silent_monitor)
+            if prio_args is None:
+                env = VecFrameStack(env, frame_stack_size)
+            else:
+                env = PrioVecFrameStack(env, frame_stack_size)
+
             # TODO prio vec frame stack
 
     else:
@@ -125,8 +137,10 @@ def build_env(args, prio_args=None):
         config.gpu_options.allow_growth = True
         get_session(config=config)
 
+        num_env = args.n_active_envs if prio_args is None else args.num_env
         flatten_dict_observations = alg not in {'her'}
-        env = make_vec_env(env_id, env_type, args.num_env or 1, seed, reward_scale=args.reward_scale, flatten_dict_observations=flatten_dict_observations, prio_args=prio_args)
+        env = make_vec_env(env_id, env_type, num_env or 1, seed, reward_scale=args.reward_scale, flatten_dict_observations=flatten_dict_observations,
+                           prio_args=prio_args, silent_monitor=silent_monitor)
 
         if env_type == 'mujoco':
             if prio_args is None:
@@ -199,27 +213,79 @@ def parse_cmdline_kwargs(args):
     return {k: parse(v) for k,v in parse_unknown_args(args).items()}
 
 
+def build_name(args):
+    if not args.prio:
+        return 'no_prio_' + str(args.n_active_envs)
+
+    # prio type
+    if not args.prio_type:
+        type = 'None'
+    else:
+        type = args.prio_type
+
+    # prio param
+    if not args.prio_param or args.prio_type == 'random':
+        param = 'None'
+    else:
+        param = args.prio_param
+
+    # exploration
+    if args.time_limit is np.inf:
+        exp_str = '_no_exp'
+    else:
+        exp_str = '_exp_freq_' + str(args.time_limit)
+
+    return type + '_' + param + '_' + str(args.n_active_envs) + '_' + str(args.num_env) + exp_str
+
+
+def check_prio_args(prio_args):
+    if not prio_args.prio:
+        if prio_args.num_env != prio_args.n_active_envs:
+            raise IOError("number of active envs differ from num_envs")
+    if prio_args.prio:
+        if not prio_args.prio_type:
+            raise IOError("prio type not specified")
+        if not prio_args.prio_type == 'random':
+            if not prio_args.prio_param:
+                raise IOError("prio param not specified")
+        else:
+            prio_args.prio_param = None
+
 
 def main(main_args):
     # configure logger, disable logging in child MPI processes (with rank > 0)
-
+    print(main_args)
     arg_parser = common_arg_parser()
     args, unknown_args = arg_parser.parse_known_args(main_args)
     extra_args = parse_cmdline_kwargs(unknown_args)
 
     prio_parser = prio_arg_parser()
     prio_args, unknown_args_prio = prio_parser.parse_known_args(main_args)
+    check_prio_args(prio_args)
     if not prio_args.prio:
         prio_args = None
-
+    print(args)
     if MPI is None or MPI.COMM_WORLD.Get_rank() == 0:
         rank = 0
-        logger.configure()
+        name = build_name(args)
+        dir = args.base_folder + '/' + args.env + '/' + name
+        listing = glob.glob(dir + '*')
+        dir += '-' + str(len(listing))
+        dir = logger.configure(dir=dir, format_strs=args.output)
+        with open(dir + "/args.txt", "w") as f:
+            f.write('-----------args------------\n')
+            for key, value in vars(args).items():
+                f.write("%s:   %s\n" % (key, value))
+            f.write('\n')
+            if prio_args is not None:
+                f.write('---------prio args---------\n')
+                for key, value in vars(prio_args).items():
+                    f.write("%s:   %s\n" % (key, value))
     else:
         logger.configure(format_strs=[])
         rank = MPI.COMM_WORLD.Get_rank()
 
-    model, env = train(args, extra_args, prio_args)
+    model, env = train(args, extra_args, prio_args, dir=dir)
     env.close()
 
     if args.save_path is not None and rank == 0:
@@ -248,8 +314,9 @@ def main(main_args):
                 obs = env.reset()
 
         env.close()
-
-    return model
+    print('return one process: ' + dir)
+    return 0
+    # return model
 
 if __name__ == '__main__':
     main(sys.argv)

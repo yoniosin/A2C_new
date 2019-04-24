@@ -1,3 +1,5 @@
+import time
+
 import numpy as np
 from baselines.a2c.utils import discount_with_dones
 from baselines.common.runners import AbstractEnvRunner
@@ -22,12 +24,15 @@ class Runner(AbstractEnvRunner):
         self.batch_action_shape = [x if x is not None else -1 for x in model.train_model.action.shape.as_list()]
         self.ob_dtype = model.train_model.X.dtype.as_numpy_dtype
         self.prio = False
+        self.exploration_steps = 0
         self.prio_args = prio_args
         if prio_args is not None:
             self.prio = prio_args.prio
             self.prioritizer = PrioritizerFactory(prio_args)
             self.all_envs = AllEnvData(obs=self.obs, states=self.states, dones=self.dones)
             self.batch_ob_shape = (prio_args.n_active_envs * nsteps,) + env.observation_space.shape
+            self.exploration_steps = prio_args.exploration_steps
+        self.counter = np.zeros(env.num_envs)
 
     def run(self):
         # We initialize the lists that will contain the mb (memory buffer) of experiences
@@ -39,15 +44,15 @@ class Runner(AbstractEnvRunner):
             # Given observations, take action and value (V(s))
             # We already have self.obs because Runner superclass run self.obs[:] = env.reset() on init
             actions, values, states, _ = self.model.step(self.obs, S=self.states, M=self.dones)
-            # actions, values, states, _ = self.model.step(self.all_envs.obs, S=self.all_envs.states, M=self.all_envs.dones)
-            # actions = actions[self.active_envs]
-            # values = values[self.active_envs]
 
             # Append the experiences
             mb.append(obs=self.obs, a=actions, v=values, dones=self.dones)
 
             # Take actions in env and look the results
-            obs, rewards, dones, infos = self.env.step(actions)
+            time.sleep(.002)
+            (obs, rewards, dones, infos), exploration_res = self.env.step(actions, self.exploration_steps)
+            self.update_all_envs_exploration(exploration_res)
+
             for info in infos:
                 maybeepinfo = info.get('episode')
                 if maybeepinfo:
@@ -79,24 +84,25 @@ class Runner(AbstractEnvRunner):
 
     def choose_envs_to_activate(self):
         if self.prio:
-            active_idx = self.prioritizer.pick_active_envs()
+            active_idx = self.prioritizer.pick_active_envs(self.all_envs.prio_score)
+            self.counter[active_idx] += 1
             if active_idx:
                 self.active_envs = list(active_idx)
 
-                try:
-                    self.env.venv.set_active_envs(active_idx)
-                except AttributeError:
-                    self.env.venv.venv.set_active_envs(active_idx)
-
+                self.env.set_active_envs(active_idx)
                 self.obs = [self.all_envs.obs[i] for i in self.active_envs]
                 self.states = self.all_envs.states[self.active_envs] if self.all_envs.states else self.all_envs.states
                 self.dones = [self.all_envs.dones[i] for i in self.active_envs]
-
-                # self.env.stackedobs = [self.all_env_dict['stackedobs'][i] for i in self.active_envs]
+        else:
+            self.counter += 1
 
     def update_all_envs(self):
         if self.prio:
             self.all_envs.update(obs=self.obs, dones=self.dones, states=self.states, envs_idx=self.active_envs)
+
+    def update_all_envs_exploration(self, exploration_res):
+        if self.prio:
+            self.all_envs.update_exploration(exploration_res)
 
 
 class AllEnvData:
@@ -112,6 +118,13 @@ class AllEnvData:
             self.dones[env] = deepcopy(dones[i])
             if states:
                 self.states[env] = deepcopy(states[i])
+
+    def update_exploration(self, exploration_res):
+        if exploration_res:
+            (obs, rewards, dones, infos, exploration_list) = exploration_res[-1]
+            self.update(obs, dones, None, exploration_list)
+
+
 
 
 class MemoryBuffer:

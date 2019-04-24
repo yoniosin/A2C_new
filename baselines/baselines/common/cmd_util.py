@@ -11,15 +11,16 @@ except ImportError:
 import gym
 from gym.wrappers import FlattenDictWrapper
 from baselines import logger
-from baselines.bench import Monitor
+from baselines.bench.monitor import MonitorFactory
 from baselines.common import set_global_seeds
 from baselines.common.atari_wrappers import make_atari, wrap_deepmind
 from baselines.common.vec_env.subproc_vec_env import SubprocVecEnv
 from baselines.common.vec_env.prio_subproc_vec_env import PrioSubprocVecEnv
 from baselines.common.vec_env.dummy_vec_env import DummyVecEnv
 from baselines.common import retro_wrappers
+import numpy as np
 
-def make_vec_env(env_id, env_type, num_env, seed,
+def make_vec_env(env_id, env_type, num_env, seed, silent_monitor,
                  wrapper_kwargs=None,
                  start_index=0,
                  reward_scale=1.0,
@@ -41,19 +42,20 @@ def make_vec_env(env_id, env_type, num_env, seed,
             reward_scale=reward_scale,
             gamestate=gamestate,
             flatten_dict_observations=flatten_dict_observations,
-            wrapper_kwargs=wrapper_kwargs
+            wrapper_kwargs=wrapper_kwargs,
+            silent_monitor=silent_monitor
         )
 
     set_global_seeds(seed)
     if prio_args is not None:
-        return PrioSubprocVecEnv(prio_args.n_active_envs, [make_thunk(i + start_index) for i in range(num_env)])
+        return PrioSubprocVecEnv(prio_args.n_active_envs, [make_thunk(i + start_index) for i in range(num_env)], prio_args.time_limit)
     if num_env > 1:
         return SubprocVecEnv([make_thunk(i + start_index) for i in range(num_env)])
     else:
         return DummyVecEnv([make_thunk(start_index)])
 
 
-def make_env(env_id, env_type, subrank=0, seed=None, reward_scale=1.0, gamestate=None, flatten_dict_observations=True, wrapper_kwargs=None):
+def make_env(env_id, env_type, subrank=0, seed=None, reward_scale=1.0, gamestate=None, flatten_dict_observations=True, wrapper_kwargs=None, silent_monitor=False):
     mpi_rank = MPI.COMM_WORLD.Get_rank() if MPI else 0
     wrapper_kwargs = wrapper_kwargs or {}
     if env_type == 'atari':
@@ -70,7 +72,9 @@ def make_env(env_id, env_type, subrank=0, seed=None, reward_scale=1.0, gamestate
         env = gym.wrappers.FlattenDictWrapper(env, dict_keys=list(keys))
 
     env.seed(seed + subrank if seed is not None else None)
-    env = Monitor(env,
+
+    monitor = MonitorFactory(silent_monitor)
+    env = monitor(env,
                   logger.get_dir() and os.path.join(logger.get_dir(), str(mpi_rank) + '.' + str(subrank)),
                   allow_early_resets=True)
 
@@ -149,13 +153,19 @@ def common_arg_parser():
     parser.add_argument('--save_video_interval', help='Save video every x steps (0 = disabled)', default=0, type=int)
     parser.add_argument('--save_video_length', help='Length of recorded video. Default: 200', default=200, type=int)
     parser.add_argument('--play', default=False, action='store_true')
+    parser.add_argument('--base_folder', default='logs', type=str)
+    parser.add_argument('--output', default=None, nargs='*')
 
     # TODO
     parser.add_argument('--n_active_envs', help='number of active envs within total envs (num_env)', type=int,
                         default=8)
-    parser.add_argument('--prio', help='prioritize agents', type=bool, default=False)
+    parser.add_argument('--prio', dest='prio', action='store_true')
+    parser.add_argument('--no-prio', dest='prio', action='store_false')
+    # parser.add_argument('--prio', help='prioritize agents', type=bool, default=False)
     parser.add_argument('--prio_type', help='prioritization by {greedy, gittins}', type=str, default=None),
     parser.add_argument('--prio_param', help='prioritization by {reward, TD error}', type=str, default=None)
+    parser.add_argument('--time_limit', help='time from last activation for exploration', type=int, default=np.inf)
+    parser.add_argument('--exploration_steps', help='number of steps after env cross the time limit from last activation', type=int, default=0)
 
     return parser
 
@@ -166,9 +176,15 @@ def prio_arg_parser():
     parser = arg_parser()
     parser.add_argument('--n_active_envs', help='number of active envs within total envs (num_env)', type=int, default=8)
     parser.add_argument('--num_env', help='Number of environment copies being run in parallel. When not specified, set to number of cpus for Atari, and to 1 for Mujoco', default=None, type=int)
-    parser.add_argument('--prio', help='prioritize agents', type=bool, default=False)
+    parser.add_argument('--prio', dest='prio', action='store_true')
+    parser.add_argument('--no-prio', dest='prio', action='store_false')
+    # parser.add_argument('--prio', help='prioritize agents', type=bool, default=False)
     parser.add_argument('--prio_type', help='prioritization by {greedy, gittins}', type=str, default=None),
     parser.add_argument('--prio_param', help='prioritization by {reward, TD error}', type=str, default=None)
+    parser.set_defaults(prio=False)
+    parser.add_argument('--time_limit', help='time from last activation for exploration', type=int, default=np.inf)
+    parser.add_argument('--exploration_steps', help='number of steps after env cross the time limit from last activation', type=int, default=0)
+
     return parser
 
 def robotics_arg_parser():

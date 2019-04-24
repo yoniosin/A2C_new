@@ -45,3 +45,6 @@ class VecNormalize(VecEnvWrapper):
     @property
     def n_active_envs(self):
         return self.venv.n_active_envs
+
+    def set_active_envs(self, active_idx):
+        self.venv.set_active_envs(active_idx)

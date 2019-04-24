@@ -351,7 +351,9 @@ def configure(dir=None, format_strs=None):
     if dir is None:
         dir = osp.join(tempfile.gettempdir(),
             datetime.datetime.now().strftime("openai-%Y-%m-%d-%H-%M-%S-%f"))
+
     assert isinstance(dir, str)
+
     os.makedirs(dir, exist_ok=True)
 
     log_suffix = ''
@@ -374,6 +376,7 @@ def configure(dir=None, format_strs=None):
 
     Logger.CURRENT = Logger(dir=dir, output_formats=output_formats)
     log('Logging to %s'%dir)
+    return dir
 
 def _configure_default_logger():
     format_strs = None

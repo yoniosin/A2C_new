@@ -87,3 +87,6 @@ class VecVideoRecorder(VecEnvWrapper):
 
     def __del__(self):
         self.close()
+
+    def set_active_envs(self, active_idx):
+        self.venv.set_active_envs(active_idx)

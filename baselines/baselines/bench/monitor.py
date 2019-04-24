@@ -68,8 +68,7 @@ class Monitor(Wrapper):
             self.episode_lengths.append(eplen)
             self.episode_times.append(time.time() - self.tstart)
             epinfo.update(self.current_reset_info)
-            self.results_writer.write_row(epinfo)
-
+            self.write_results(epinfo)
             if isinstance(info, dict):
                 info['episode'] = epinfo
 
@@ -90,6 +89,39 @@ class Monitor(Wrapper):
 
     def get_episode_times(self):
         return self.episode_times
+
+    def write_results(self, epinfo):
+        self.results_writer.write_row(epinfo)
+
+
+class SilentMonitor(Monitor):
+    def __init__(self, env, filename, allow_early_resets=False, reset_keywords=(), info_keywords=()):
+        Wrapper.__init__(self, env=env)
+        self.tstart = time.time()
+        # self.results_writer = ResultsWriter(
+        #     filename,
+        #     header={"t_start": time.time(), 'env_id': env.spec and env.spec.id},
+        #     extra_keys=reset_keywords + info_keywords
+        # )
+        self.reset_keywords = reset_keywords
+        self.info_keywords = info_keywords
+        self.allow_early_resets = allow_early_resets
+        self.rewards = None
+        self.needs_reset = True
+        self.episode_rewards = []
+        self.episode_lengths = []
+        self.episode_times = []
+        self.total_steps = 0
+        self.current_reset_info = {}  # extra info about the current episode, that was passed in during reset()
+
+    def write_results(self, epinfo):
+        pass
+
+def MonitorFactory(silent_monitor):
+    if silent_monitor:
+        return SilentMonitor
+    else:
+        return Monitor
 
 class LoadMonitorResultsError(Exception):
     pass
@@ -135,12 +167,13 @@ def load_results(dir):
     dfs = []
     headers = []
     for fname in monitor_files:
+        print(fname)
         with open(fname, 'rt') as fh:
             if fname.endswith('csv'):
                 firstline = fh.readline()
                 if not firstline:
                     continue
-                assert firstline[0] == '#'
+                assert firstline[0] in ['#', '"']
                 header = json.loads(firstline[1:])
                 df = pandas.read_csv(fh, index_col=None)
                 headers.append(header)

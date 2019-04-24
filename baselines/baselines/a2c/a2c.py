@@ -1,3 +1,4 @@
+import pickle
 import time
 import functools
 import tensorflow as tf
@@ -18,6 +19,8 @@ from tensorflow import losses
 
 from baselines.a2c.prioritizer import *
 from baselines.a2c.MyNN import MyNN
+import matplotlib.pyplot as plt
+import numpy as np
 
 
 def GetValuesForPrio(prio_type, prio_param, advs, rewards):
@@ -28,6 +31,8 @@ def GetValuesForPrio(prio_type, prio_param, advs, rewards):
             return rewards
         if prio_param == 'error':
             return abs(advs)
+        if prio_param == 'minus_error':
+            return -abs(advs)
     raise NotImplementedError(prio_type + ' ' + prio_param)
 
 
@@ -128,7 +133,6 @@ class Model(object):
         _prio_train = prio_trainer.apply_gradients(prio_grads)
 
         lr = Scheduler(v=lr, nvalues=total_timesteps, schedule=lrschedule)
-        prio_lr = Scheduler(v=lr, nvalues=total_timesteps, schedule=lrschedule)
 
         def train(obs, states, rewards, masks, actions, values):
             # Here we calculate advantage A(s,a) = R + yV(s') - V(s)
@@ -146,13 +150,6 @@ class Model(object):
                 td_map
             )
 
-            return policy_loss, value_loss, policy_entropy
-
-        def prioritizer_train(obs, states, rewards, masks, actions, values):
-            for step in range(len(obs)):
-                cur_lr = prio_lr.value()
-
-            advs = rewards - values
             prio_loss = 0
             if prio:
                 prio_values = GetValuesForPrio(self.prio_args.prio_type, self.prio_args.prio_param, advs, rewards)
@@ -166,11 +163,10 @@ class Model(object):
                     # mb aranged as 1D-vector = [[env_1: n1, ..., n_nstep],...,[env_n_active]]
                     # need to take last value of each env's buffer
                     self.prio_score = prio_values[list(filter(lambda x: x % nsteps == (nsteps - 1), range(len(prio_values))))]
+            return policy_loss, value_loss, policy_entropy, prio_loss
 
-            return prio_loss
 
         self.train = train
-        self.prioritizer_train = prioritizer_train
         self.train_model = train_model
         self.step_model = step_model
         self.step = step_model.step
@@ -184,6 +180,8 @@ class Model(object):
 def learn(
     network,
     env,
+    dir,
+    eval_env,
     seed=None,
     nsteps=5,
     total_timesteps=int(80e6),
@@ -247,8 +245,7 @@ def learn(
 
     '''
 
-
-
+    global eval_runner
     set_global_seeds(seed)
     prio = False if not prio_args else prio_args.prio
 
@@ -267,25 +264,30 @@ def learn(
     runner = Runner(env, model, nsteps=nsteps, gamma=gamma, prio_args=prio_args)
     epinfobuf = deque(maxlen=100)
 
+    # eval_env
+    eval_runner = Runner(eval_env, model, nsteps=nsteps, gamma=gamma)
+    eval_epinfobuf = deque(maxlen=100)
+
     # Calculate the batch_size
-    nbatch = env.n_active_envs * nsteps
+    active_envs = env.n_active_envs if prio_args else nenvs
+    nbatch = active_envs * nsteps
 
     # Start total timer
     tstart = time.time()
-
-    for update in range(1, total_timesteps//nbatch+1):
+    envs_activation = []
+    updates_num = total_timesteps//nbatch+1
+    for update in range(1, updates_num):
         # Get mini batch of experiences
         obs, states, rewards, masks, actions, values, epinfos = runner.run()
         epinfobuf.extend(epinfos)
 
-        if update % log_interval == 0 or update == 1:
-            try:
-                print('active envs {}'.format(runner.active_envs))
-            except:
-                pass
+        eval_obs, eval_states, eval_rewards, eval_masks, eval_actions, eval_values, eval_epinfos = eval_runner.run()
+        eval_epinfobuf.extend(eval_epinfos)
 
-        policy_loss, value_loss, policy_entropy = model.train(obs, states, rewards, masks, actions, values)
-        prio_loss = model.prioritizer_train(obs, states, rewards, masks, actions, values)
+        if update % log_interval == 0 or update == 1:
+            envs_activation.append(np.copy(runner.counter))
+
+        policy_loss, value_loss, policy_entropy, prio_loss = model.train(obs, states, rewards, masks, actions, values)
         if prio and model.prio_score is not None:
             for i, env in enumerate(runner.active_envs):
                 runner.all_envs.prio_score[env] = model.prio_score[i]
@@ -306,6 +308,30 @@ def learn(
             logger.record_tabular("explained_variance", float(ev))
             logger.record_tabular("eprewmean", safemean([epinfo['r'] for epinfo in epinfobuf]))
             logger.record_tabular("eplenmean", safemean([epinfo['l'] for epinfo in epinfobuf]))
+            logger.record_tabular("eval_eprewmean", safemean([epinfo['r'] for epinfo in eval_epinfobuf]))
+            logger.record_tabular("eval_eplenmean", safemean([epinfo['l'] for epinfo in eval_epinfobuf]))
             logger.dump_tabular()
+
+        if update % 100000 == 0:
+            print(dir + 'update number ' + str(update))
+
+    with open(dir + '/envs_activation.pickle', 'wb') as handle:
+        pickle.dump(envs_activation, handle)
+    plot_activations(envs_activation, dir, nbatch)
+    plt.show()
+
     return model
+
+
+def plot_activations(envs_activation, dir, nbatch, ylim=None):
+    fig, ax = plt.subplots()
+    ax.plot(np.arange(len(envs_activation)) * nbatch, np.asarray(envs_activation))
+    ax.set_title(dir)
+    ax.set_xlabel('total simulation steps')
+    ax.set_ylabel('envs activation')
+    ax.legend(list(map(str, np.arange(envs_activation[0].shape[0]))))
+    if ylim is not None:
+        ax.set_ylim([0, ylim])
+    # plt.show()
+
 

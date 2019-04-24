@@ -43,6 +43,9 @@ class GreedyValuePrioritizer(RandomPrioritizer):
         return best_envs
 
 def PrioritizerFactory(prio_args):
+    if prio_args is None:
+        return None
+
     PrioritizerClass = Prioritizer
 
     if prio_args.prio_type == 'random':
