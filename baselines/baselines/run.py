@@ -69,7 +69,9 @@ def train(args, extra_args, prio_args, dir):
     env = build_env(args, silent_monitor=True, prio_args=prio_args)
     eval_env = build_env(args, silent_monitor=False)
     if args.save_video_interval != 0:
-        env = VecVideoRecorder(env, osp.join(logger.Logger.CURRENT.dir, "videos"), record_video_trigger=lambda x: x % args.save_video_interval == 0, video_length=args.save_video_length)
+        env = VecVideoRecorder(env, osp.join(logger.Logger.CURRENT.dir, "videos"),
+                               record_video_trigger=lambda x: x % args.save_video_interval == 0,
+                               video_length=args.save_video_length)
 
     if args.network:
         alg_kwargs['network'] = args.network
@@ -139,7 +141,8 @@ def build_env(args, silent_monitor, prio_args=None):
 
         num_env = args.n_active_envs if prio_args is None else args.num_env
         flatten_dict_observations = alg not in {'her'}
-        env = make_vec_env(env_id, env_type, num_env or 1, seed, reward_scale=args.reward_scale, flatten_dict_observations=flatten_dict_observations,
+        env = make_vec_env(env_id, env_type, num_env or 1, seed, reward_scale=args.reward_scale,
+                           flatten_dict_observations=flatten_dict_observations,
                            prio_args=prio_args, silent_monitor=silent_monitor)
 
         if env_type == 'mujoco':
@@ -172,6 +175,7 @@ def get_default_network(env_type):
     else:
         return 'mlp'
 
+
 def get_alg_module(alg, submodule=None):
     submodule = submodule or alg
     try:
@@ -197,11 +201,11 @@ def get_learn_function_defaults(alg, env_type):
     return kwargs
 
 
-
 def parse_cmdline_kwargs(args):
     '''
     convert a list of '='-spaced command-line arguments to a dictionary, evaluating python objects when possible
     '''
+
     def parse(v):
 
         assert isinstance(v, str)
@@ -210,46 +214,31 @@ def parse_cmdline_kwargs(args):
         except (NameError, SyntaxError):
             return v
 
-    return {k: parse(v) for k,v in parse_unknown_args(args).items()}
+    return {k: parse(v) for k, v in parse_unknown_args(args).items()}
 
 
 def build_name(args):
     if not args.prio:
         return 'no_prio_' + str(args.n_active_envs)
 
-    # prio type
-    if not args.prio_type:
-        type = 'None'
-    else:
-        type = args.prio_type
-
-    # prio param
-    if not args.prio_param or args.prio_type == 'random':
-        param = 'None'
-    else:
-        param = args.prio_param
-
-    # exploration
-    if args.time_limit is np.inf:
-        exp_str = '_no_exp'
-    else:
-        exp_str = '_exp_freq_' + str(args.time_limit)
-
-    return type + '_' + param + '_' + str(args.n_active_envs) + '_' + str(args.num_env) + exp_str
+    return '_'.join([args.prio_type if args.prio_type else 'None',
+                     str(args.prio_param) if args.prio_param and args.prio_type != 'random' else 'None',
+                     str(args.n_active_envs),
+                     str(args.num_env)] +
+                    ['no_exp'] if args.time_limit is np.inf else ['exp_freq',
+                                                                  str(args.time_limit),
+                                                                  'exp_steps',
+                                                                  str(args.exploration_steps)])
 
 
 def check_prio_args(prio_args):
-    if not prio_args.prio:
-        if prio_args.num_env != prio_args.n_active_envs:
-            raise IOError("number of active envs differ from num_envs")
     if prio_args.prio:
-        if not prio_args.prio_type:
-            raise IOError("prio type not specified")
-        if not prio_args.prio_type == 'random':
-            if not prio_args.prio_param:
-                raise IOError("prio param not specified")
-        else:
-            prio_args.prio_param = None
+        if not prio_args.prio_type: raise IOError("prio type not specified")
+        elif prio_args.prio_type == 'random': prio_args.prio_param = None  # random requires no parameter
+        elif not prio_args.prio_param: raise IOError("prio param not specified")
+    else:
+        # if prio is not required, all envs must activated
+        if prio_args.num_env != prio_args.n_active_envs: raise IOError("number of active envs differ from num_envs")
 
 
 def main(main_args):
@@ -302,7 +291,7 @@ def main(main_args):
 
         while True:
             if state is not None:
-                actions, _, state, _ = model.step(obs,S=state, M=dones)
+                actions, _, state, _ = model.step(obs, S=state, M=dones)
             else:
                 actions, _, _, _ = model.step(obs)
 
@@ -317,6 +306,7 @@ def main(main_args):
     print('return one process: ' + dir)
     return 0
     # return model
+
 
 if __name__ == '__main__':
     main(sys.argv)

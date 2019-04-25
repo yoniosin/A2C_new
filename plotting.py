@@ -12,7 +12,7 @@ def plot_monitors():
     # following format: <name_exp0>-0, <name_exp0>-1, <name_exp1>-0, <name_exp1>-1.
     # Where names correspond to experiments you want to compare separated with random seeds by dash.
 
-    LOG_DIRS = '/home/deep3/PycharmProjects/A2C_new/baselines/logs/Humanoid-v2'
+    LOG_DIRS = '/home/deep3/logs/Humanoid-v2/'
     # LOG_DIRS = '/home/deep3/logs/Hopper-v2/'
     # Uncomment below to see the effect of the timit limits flag
     # LOG_DIRS = 'time_limit_logs/reacher'
@@ -40,9 +40,10 @@ def plot_activations_list(dir, pattern):
 
 
 if __name__ == '__main__':
-    # plot_monitors()
+    plot_monitors()
     # dir = '/home/deep3/PycharmProjects/A2C_new/logs/Hopper-v2'
-    plot_activations_list('/home/deep3/logs/Hopper-v2', '')
+    # plot_activations_list('/home/deep3/logs/Hopper-v2', '')
+    # plot_activations_list('/home/deep3/PycharmProjects/A2C_new/baselines/logs/Humanoid-v2/', '')
     plt.show()
 
     print('done')

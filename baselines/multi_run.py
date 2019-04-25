@@ -1,5 +1,4 @@
 import multiprocessing as mp
-import random
 import sys
 
 from baselines.run import main
@@ -34,6 +33,7 @@ def multi_run_arg_parse():
 
     return parser
 
+
 if __name__ == '__main__':
     # Setup a list of processes that we want to run
 
@@ -44,31 +44,32 @@ if __name__ == '__main__':
         raise IOError(str(unknown_args))
 
     # runs_num = args.runs_num
-    runs_num = 4
+    runs_num = 2
     const_args_list = ['--alg=a2c',
-                       '--num_timesteps=5e6',
+                       '--num_timesteps=1e6',
                        '--prio_param=error',
                        '--output', 'log', 'tensorboard', 'csv']
 
 
     # env_list = args.env_list
-    env_list = ['Humanoid-v2']
+    env_list = ['Hopper-v2']
     # env_list = ['Hopper-v2', 'HalfCheetah-v2', 'Ant-v2', 'Humanoid-v2', 'PongNoFrameskip-v4']
     # num_envs_list = args.num_envs_list
     num_envs_list = [8]
     # active_envs_list = args.active_envs_list
     active_envs_list = [3]
     # prio_type_list = args.prio_type_list
-    prio_type_list = ['greedy', 'random', None]
+    prio_type_list = ['greedy']
     # time_limit_list = args.time_limit_list
-    time_limit_list = [None]
+    time_limit_list = [10, 100, 1000]
     # exploration_steps_list = args.exploration_steps_list
-    exploration_steps_list = [1]
+    exploration_steps_list = [3, 7, 15]
 
-    no_prio = False
-    if None in prio_type_list:
-        no_prio = True
+    try:
         prio_type_list.remove(None)
+        no_prio = True
+    except ValueError:
+        no_prio = False
 
     for env, num_env, active_env in product(env_list, num_envs_list, active_envs_list):
         processes = []

@@ -49,8 +49,8 @@ class Runner(AbstractEnvRunner):
             mb.append(obs=self.obs, a=actions, v=values, dones=self.dones)
 
             # Take actions in env and look the results
-            time.sleep(.002)
-            (obs, rewards, dones, infos), exploration_res = self.env.step(actions, self.exploration_steps)
+            # time.sleep(.002)
+            obs, rewards, dones, infos, exploration_res = self.env.step(actions, self.exploration_steps)
             self.update_all_envs_exploration(exploration_res)
 
             for info in infos:
@@ -79,8 +79,7 @@ class Runner(AbstractEnvRunner):
         return mb.results() + (epinfos,)
 
     def reorder_obs(self):
-        envs_idx = self.env.venv.active_envs
-        self.obs = [self.obs[i] for i in envs_idx]
+        self.obs = list(map(lambda env_id: self.obs[env_id], self.env.venv.active_envs))
 
     def choose_envs_to_activate(self):
         if self.prio:
@@ -123,8 +122,6 @@ class AllEnvData:
         if exploration_res:
             (obs, rewards, dones, infos, exploration_list) = exploration_res[-1]
             self.update(obs, dones, None, exploration_list)
-
-
 
 
 class MemoryBuffer:

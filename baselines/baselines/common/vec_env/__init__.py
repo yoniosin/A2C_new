@@ -110,7 +110,7 @@ class VecEnv(ABC):
             if exp_res:
                 exploration_res.append(exp_res)
         self.zero_time_from_last_activation()
-        return self.step_wait(), exploration_res
+        return (*self.step_wait()), exploration_res
 
     def zero_time_from_last_activation(self):
         pass
