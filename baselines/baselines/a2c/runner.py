@@ -18,25 +18,17 @@ class Runner(AbstractEnvRunner):
     - Make a mini batch of experiences
     """
 
-    def __init__(self, env, model, nsteps=5, gamma=0.99, prio_args=None):
+    def __init__(self, env, model, nsteps, gamma):
         super().__init__(env=env, model=model, nsteps=nsteps)
         self.gamma = gamma
         self.batch_action_shape = [x if x is not None else -1 for x in model.train_model.action.shape.as_list()]
         self.ob_dtype = model.train_model.X.dtype.as_numpy_dtype
-        self.prio = False
         self.exploration_steps = 0
-        self.prio_args = prio_args
-        if prio_args is not None:
-            self.prio = prio_args.prio
-            self.prioritizer = PrioritizerFactory(prio_args)
-            self.all_envs = AllEnvData(obs=self.obs, states=self.states, dones=self.dones)
-            self.batch_ob_shape = (prio_args.n_active_envs * nsteps,) + env.observation_space.shape
-            self.exploration_steps = prio_args.exploration_steps
         self.counter = np.zeros(env.num_envs)
 
-    def run(self):
+    def run(self, **kwargs):
         # We initialize the lists that will contain the mb (memory buffer) of experiences
-        self.choose_envs_to_activate()
+        # self.choose_envs_to_activate(**kwargs)
         mb = MemoryBuffer()
         mb.states = self.states
         epinfos = []
@@ -78,30 +70,52 @@ class Runner(AbstractEnvRunner):
         self.update_all_envs()
         return mb.results() + (epinfos,)
 
-    def reorder_obs(self):
-        self.obs = list(map(lambda env_id: self.obs[env_id], self.env.venv.active_envs))
+    # def reorder_obs(self):
+    #     self.obs = list(map(lambda env_id: self.obs[env_id], self.env.venv.active_envs))
 
-    def choose_envs_to_activate(self):
-        if self.prio:
-            active_idx = self.prioritizer.pick_active_envs(self.all_envs.prio_score)
-            self.counter[active_idx] += 1
-            if active_idx:
-                self.active_envs = list(active_idx)
-
-                self.env.set_active_envs(active_idx)
-                self.obs = [self.all_envs.obs[i] for i in self.active_envs]
-                self.states = self.all_envs.states[self.active_envs] if self.all_envs.states else self.all_envs.states
-                self.dones = [self.all_envs.dones[i] for i in self.active_envs]
-        else:
-            self.counter += 1
+    # def choose_envs_to_activate(self, _):
+    #     self.counter += 1
 
     def update_all_envs(self):
-        if self.prio:
-            self.all_envs.update(obs=self.obs, dones=self.dones, states=self.states, envs_idx=self.active_envs)
+        pass
+
+    def update_all_envs_exploration(self, _):
+        pass
+
+
+class PrioRunner(Runner):
+    def __init__(self, env, model, prio_args, nsteps, gamma):
+        super().__init__(env, model, nsteps, gamma)
+        self.prioritizer = PrioritizerFactory(prio_args)
+        self.all_envs = AllEnvData(obs=self.obs, states=self.states, dones=self.dones)
+        self.batch_ob_shape = (prio_args.n_active_envs * nsteps,) + env.observation_space.shape
+
+    def run(self, **kwargs):
+        self.choose_envs_to_activate(**kwargs)
+        return super().run()
+
+    def choose_envs_to_activate(self, **kwargs):
+        active_idx = self.prioritizer.pick_active_envs(kwargs['prio_score'])
+        self.counter[active_idx] += 1
+        if active_idx:
+            self.active_envs = list(active_idx)
+
+            self.env.set_active_envs(active_idx)
+            self.obs = [self.all_envs.obs[i] for i in self.active_envs]
+            self.states = self.all_envs.states[self.active_envs] if self.all_envs.states else self.all_envs.states
+            self.dones = [self.all_envs.dones[i] for i in self.active_envs]
+
+    def update_all_envs(self):
+        self.all_envs.update(obs=self.obs, dones=self.dones, states=self.states, envs_idx=self.active_envs)
+
+
+class ExpPrioRunner(PrioRunner):
+    def __init__(self, env, model, prio_args, nsteps, gamma):
+        super().__init__(env, model, prio_args, nsteps, gamma)
+        self.exploration_steps = prio_args.exploration_steps
 
     def update_all_envs_exploration(self, exploration_res):
-        if self.prio:
-            self.all_envs.update_exploration(exploration_res)
+        self.all_envs.update_exploration(exploration_res)
 
 
 class AllEnvData:
@@ -109,7 +123,7 @@ class AllEnvData:
         self.obs = deepcopy(obs)
         self.states = deepcopy(states)
         self.dones = deepcopy(dones)
-        self.prio_score = np.full((len(dones)), np.inf)
+        # self.prio_score = np.full((len(dones)), np.inf)
 
     def update(self, obs, dones, states, envs_idx):
         for i, env in enumerate(envs_idx):
@@ -176,3 +190,13 @@ class MemoryBuffer:
 
     def results(self):
         return self.obs, self.states, self.r, self.masks, self.a, self.v
+
+
+def RunnerBuilder(env, model, nsteps=5, gamma=0.99, prio_args=None):
+    if not prio_args:
+        return Runner(env, model, nsteps=nsteps, gamma=gamma)
+    else:
+        if prio_args.time_limit < np.inf:
+            return ExpPrioRunner(env, model, nsteps=nsteps, gamma=gamma, prio_args=prio_args)
+        else:
+            return PrioRunner(env, model, nsteps=nsteps, gamma=gamma, prio_args=prio_args)

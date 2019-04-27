@@ -40,9 +40,9 @@ def plot_activations_list(dir, pattern):
 
 
 if __name__ == '__main__':
-    plot_monitors()
+    # plot_monitors()
     # dir = '/home/deep3/PycharmProjects/A2C_new/logs/Hopper-v2'
-    # plot_activations_list('/home/deep3/logs/Hopper-v2', '')
+    plot_activations_list('/home/deep3/logs/Hopper-v2', '')
     # plot_activations_list('/home/deep3/PycharmProjects/A2C_new/baselines/logs/Humanoid-v2/', '')
     plt.show()
 

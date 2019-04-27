@@ -225,17 +225,28 @@ def build_name(args):
                      str(args.prio_param) if args.prio_param and args.prio_type != 'random' else 'None',
                      str(args.n_active_envs),
                      str(args.num_env)] +
-                    ['no_exp'] if args.time_limit is np.inf else ['exp_freq',
-                                                                  str(args.time_limit),
-                                                                  'exp_steps',
-                                                                  str(args.exploration_steps)])
+                    (['no_exp'] if args.time_limit is np.inf else ['exp_freq',
+                                                                   str(args.time_limit),
+                                                                   'exp_steps',
+                                                                   str(args.exploration_steps)]))
 
 
 def check_prio_args(prio_args):
     if prio_args.prio:
-        if not prio_args.prio_type: raise IOError("prio type not specified")
-        elif prio_args.prio_type == 'random': prio_args.prio_param = None  # random requires no parameter
-        elif not prio_args.prio_param: raise IOError("prio param not specified")
+        if not prio_args.prio_type:
+            raise IOError("prio type not specified")
+        elif prio_args.prio_type == 'random':
+            prio_args.prio_param = None  # random requires no parameter
+        elif not prio_args.prio_param:
+            raise IOError("prio param not specified")
+
+        if prio_args.time_limit < np.inf and prio_args.exploratio_steps <= 0:
+            raise IOError("exploration run, but exploration step is {}".format(prio_args.exploration_steps))
+
+        if prio_args.exploration_steps > 0 and prio_args.time_limit == np.inf:
+            raise IOError("exploration run, but time limit is {}".format(prio_args.time_limit))
+
+
     else:
         # if prio is not required, all envs must activated
         if prio_args.num_env != prio_args.n_active_envs: raise IOError("number of active envs differ from num_envs")

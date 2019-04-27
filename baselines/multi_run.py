@@ -47,7 +47,6 @@ if __name__ == '__main__':
     runs_num = 2
     const_args_list = ['--alg=a2c',
                        '--num_timesteps=1e6',
-                       '--prio_param=error',
                        '--output', 'log', 'tensorboard', 'csv']
 
 
@@ -60,10 +59,11 @@ if __name__ == '__main__':
     active_envs_list = [3]
     # prio_type_list = args.prio_type_list
     prio_type_list = ['greedy']
+    prio_param_list = ['reward']
     # time_limit_list = args.time_limit_list
-    time_limit_list = [10, 100, 1000]
+    time_limit_list = [None]
     # exploration_steps_list = args.exploration_steps_list
-    exploration_steps_list = [3, 7, 15]
+    exploration_steps_list = [1]
 
     try:
         prio_type_list.remove(None)
@@ -81,14 +81,15 @@ if __name__ == '__main__':
 
             [processes.append(mp.Process(target=run_process, args=(args_list, output))) for _ in range(runs_num)]
 
-        for prio_type, time_limit, exploration_steps in product(prio_type_list, time_limit_list, exploration_steps_list):
+        for prio_type, prio_param, time_limit, exploration_steps in product(prio_type_list, prio_param_list, time_limit_list, exploration_steps_list):
             if active_env > num_env: continue
 
             args_list = const_args_list + ['--env=' + str(env),
                                            '--num_env=' + str(num_env),
                                            '--n_active_envs=' + str(active_env),
                                            '--prio',
-                                           '--prio_type=' + str(prio_type)]
+                                           '--prio_type=' + str(prio_type),
+                                           '--prio_param=' + str(prio_param)]
             if time_limit is not None:
                 args_list.append('--time_limit=' + str(time_limit))
                 args_list.append('--exploration_steps=' + str(exploration_steps))

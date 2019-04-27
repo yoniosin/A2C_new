@@ -10,13 +10,12 @@ from baselines.common import tf_util
 from baselines.common.policies import build_policy
 
 from baselines.a2c.utils import Scheduler, find_trainable_variables
-from baselines.a2c.runner import Runner
+from baselines.a2c.runner import RunnerBuilder
 from baselines.ppo2.ppo2 import safemean
 from collections import deque
 
 from tensorflow import losses
 
-from baselines.a2c.prioritizer import *
 from baselines.a2c.MyNN import MyNN
 import matplotlib.pyplot as plt
 import numpy as np
@@ -61,7 +60,7 @@ class Model(object):
                  alpha=0.99, epsilon=1e-5, total_timesteps=int(80e6), lrschedule='linear', prio_args=None,
                  network='cnn'):
         self.prio_args = prio_args
-        self.prio_score = None
+        # self.prio_score = None
         prio = False if prio_args is None else prio_args.prio
         sess = tf_util.get_session()
 
@@ -98,7 +97,7 @@ class Model(object):
 
         """prio model"""
         with tf.variable_scope('a2c_model_prio', reuse=tf.AUTO_REUSE):
-            prio_model = MyNN(env, nbatch, network)
+            prio_model = MyNN(env, nbatch, nsteps, env.n_active_envs, network)
 
         P_R = tf.placeholder(tf.float32, [nbatch])
         PRIO = tf.placeholder(tf.float32, [nbatch])
@@ -161,13 +160,14 @@ class Model(object):
                     )
                     # mb aranged as 1D-vector = [[env_1: n1, ..., n_nstep],...,[env_n_active]]
                     # need to take last value of each env's buffer
-                    self.prio_score = prio_values[
-                        list(filter(lambda x: x % nsteps == (nsteps - 1), range(len(prio_values))))]
+                    # self.prio_score = prio_values[
+                    #     list(filter(lambda x: x % nsteps == (nsteps - 1), range(len(prio_values))))]
             return policy_loss, value_loss, policy_entropy, prio_loss
 
         self.train = train
         self.train_model = train_model
         self.step_model = step_model
+        self.prio_model = prio_model
         self.step = step_model.step
         self.value = step_model.value
         self.initial_state = step_model.initial_state
@@ -260,11 +260,11 @@ def learn(
         model.load(load_path)
 
     # Instantiate the runner object
-    runner = Runner(env, model, nsteps=nsteps, gamma=gamma, prio_args=prio_args)
+    runner = RunnerBuilder(env, model, nsteps=nsteps, gamma=gamma, prio_args=prio_args)
     epinfobuf = deque(maxlen=100)
 
     # eval_env
-    eval_runner = Runner(eval_env, model, nsteps=nsteps, gamma=gamma)
+    eval_runner = RunnerBuilder(eval_env, model, nsteps=nsteps, gamma=gamma)
     eval_epinfobuf = deque(maxlen=100)
 
     # Calculate the batch_size
@@ -275,9 +275,12 @@ def learn(
     tstart = time.time()
     envs_activation = []
     updates_num = total_timesteps // nbatch + 1
+    prio_score = np.full(nenvs, np.inf) if prio else None
     for update in range(1, updates_num):
         # Get mini batch of experiences
-        obs, states, rewards, masks, actions, values, epinfos = runner.run()
+        # TODO fix evaluate to all envs
+        obs, states, rewards, masks, actions, values, epinfos = runner.run(prio_score=prio_score)
+        prio_score = model.prio_model.evaluate_chunks(runner.all_envs.obs) if prio else None
         epinfobuf.extend(epinfos)
 
         eval_obs, eval_states, eval_rewards, eval_masks, eval_actions, eval_values, eval_epinfos = eval_runner.run()
@@ -287,9 +290,9 @@ def learn(
             envs_activation.append(np.copy(runner.counter))
 
         policy_loss, value_loss, policy_entropy, prio_loss = model.train(obs, states, rewards, masks, actions, values)
-        if prio and model.prio_score is not None:
-            for i, env in enumerate(runner.active_envs):
-                runner.all_envs.prio_score[env] = model.prio_score[i]
+        # if prio and model.prio_score is not None:
+        #     for i, env in enumerate(runner.active_envs):
+        #         runner.all_envs.prio_score[env] = model.prio_score[i]
         nseconds = time.time() - tstart
 
         # Calculate the fps (frame per second)
